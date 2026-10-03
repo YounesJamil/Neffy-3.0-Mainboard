@@ -60,7 +60,11 @@ static bool          streamThermal      = false;
 static void onBreathingStart(Message&) { breathingRequested = true; }
 
 static void setSpeakerMuted(bool muted) {
-    digitalWrite(BoardConfig::MUTE_PIN, muted == BoardConfig::MUTE_ACTIVE_HIGH ? HIGH : LOW);
+    if (BoardConfig::MUTE_ACTIVE_HIGH) {
+        digitalWrite(BoardConfig::MUTE_PIN, muted ? HIGH : LOW);
+    } else {
+        digitalWrite(BoardConfig::MUTE_PIN, muted ? LOW : HIGH);  // LOW mutes
+    }
 }
 
 static void onMute(Message& msg) {
