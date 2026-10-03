@@ -36,6 +36,7 @@ static constexpr uint32_t CONFIRM_MS    = 300;
 static constexpr float    K_STEP        = 8.0f;
 static constexpr float    STEP_MIN_V    = 0.012f;
 static constexpr uint32_t EVENT_GAP_MS  = 250;
+static constexpr uint32_t SAME_EVENT_MS = 30;     // pulse click this close before a jump = same click
 
 static constexpr float    K_HAND        = 8.0f;
 static constexpr float    HAND_MIN_V    = 0.010f;
@@ -54,14 +55,19 @@ PressureDetector::PressureDetector(NeffyInterface& iface, VoltageReader& voltage
 
 float PressureDetector::readSigned() {
     float v = _voltage.readV();
-    return _invert ? -v : v;
+    return _invert ? -v : v;  // pressing always raises the signal
 }
 
 void PressureDetector::init() {
-    _x = _local = _rest = _prevC = readSigned();
+    _smoothed = _local = _rest = _prevSig = readSigned();
 
-    _clickMsg.command         = _isLeft ? NeffyCommands::PRESSURE_CLICK_L.id            : NeffyCommands::PRESSURE_CLICK_R.id;
-    _clickMsg.bytes_in_buffer = _isLeft ? NeffyCommands::PRESSURE_CLICK_L.payloadLength : NeffyCommands::PRESSURE_CLICK_R.payloadLength;
+    if (_isLeft) {
+        _clickMsg.command         = NeffyCommands::PRESSURE_CLICK_L.id;
+        _clickMsg.bytes_in_buffer = NeffyCommands::PRESSURE_CLICK_L.payloadLength;
+    } else {
+        _clickMsg.command         = NeffyCommands::PRESSURE_CLICK_R.id;
+        _clickMsg.bytes_in_buffer = NeffyCommands::PRESSURE_CLICK_R.payloadLength;
+    }
 }
 
 void PressureDetector::setMuted(bool muted) { _muted = muted; }
@@ -80,16 +86,16 @@ void PressureDetector::update(unsigned long nowMs) {
     if (nowMs - _prevReadMs < READ_INTERVAL_MS) return;
     _prevReadMs = nowMs;
 
-    float v = _lastV = readSigned();
-    _x     += (v - _x) * A_SMOOTH;
+    float raw  = _lastV = readSigned();
+    _smoothed += (raw - _smoothed) * A_SMOOTH;
 
     // Clicks use the raw signal while no hand rests (quiet; light clicks are only
     // 1-2 samples long and smoothing would halve them), the smoothed one with a hand.
-    float c      = _hand ? _x : v;
-    float step   = c - _prevC;
-    float jitter = fabsf(step);
-    _prevC       = c;
-    float d      = c - _local;
+    float sig        = _hand ? _smoothed : raw;
+    float step       = sig - _prevSig;      // change since the last reading
+    float jitter     = fabsf(step);
+    _prevSig         = sig;
+    float aboveLocal = sig - _local;
 
     _clickThr = fmaxf(K_CLICK * _noise, CLICK_MIN_V);
     if (_hand) _clickThr = fmaxf(_clickThr, CLICK_FRAC * _clickAmp);
@@ -97,24 +103,26 @@ void PressureDetector::update(unsigned long nowMs) {
 
     // --- click: short pulse above the local baseline
     if (!_inPulse) {
-        if (d > _clickThr) {
+        if (aboveLocal > _clickThr) {
             _inPulse      = true;
             _pulseStartMs = nowMs;
-            _pulsePeak    = d;
+            _pulsePeak    = aboveLocal;
         } else {
-            _local += d * (d < 0.0f ? A_LOCAL_DN : A_LOCAL_UP);
-            float j = fminf(jitter, _clickThr); // one big step must not blow up the estimate
-            _noise += (j - _noise) * A_NOISE;
-            if (!_hand) _restNoise += (j - _restNoise) * A_NOISE;
+            if (aboveLocal < 0.0f) _local += aboveLocal * A_LOCAL_DN;  // follow a drop at once
+            else                   _local += aboveLocal * A_LOCAL_UP;  // and a rise slowly
+            float capped = fminf(jitter, _clickThr); // one big step must not blow up the estimate
+            _noise += (capped - _noise) * A_NOISE;
+            if (!_hand) _restNoise += (capped - _restNoise) * A_NOISE;
         }
     } else {
-        _pulsePeak = fmaxf(_pulsePeak, d);
+        _pulsePeak = fmaxf(_pulsePeak, aboveLocal);
         if (nowMs - _pulseStartMs > CLICK_MAX_MS) {
             _inPulse = false; // long press: let the local baseline follow
-            _local   = c;
-        } else if (d < _clickThr / 2.0f) {
+            _local   = sig;
+        } else if (aboveLocal < _clickThr / 2.0f) {
             _inPulse   = false;
-            _clickAmp += (_pulsePeak - _clickAmp) * (_clickAmp > 0.0f ? A_CLICK_AMP : 1.0f);
+            if (_clickAmp == 0.0f) _clickAmp = _pulsePeak;                             // first click
+            else                   _clickAmp += (_pulsePeak - _clickAmp) * A_CLICK_AMP;  // then average
             if (!_anyClick || nowMs - _lastClickMs > PULSE_REPEAT_MS) {
                 _pendingClick   = true;
                 _pendingSinceMs = nowMs;
@@ -146,7 +154,7 @@ void PressureDetector::update(unsigned long nowMs) {
     if (_evActive && nowMs - _evLastMs >= EVENT_GAP_MS) {
         _evActive = false;
         bool bothWays = fminf(_evUp, _evDn) >= stepThr;
-        bool counted  = _anyClick && _lastClickMs + 30 >= _evStartMs;
+        bool counted  = _anyClick && _lastClickMs + SAME_EVENT_MS >= _evStartMs;  // pulse click got it
         if (bothWays && !_evSkip && !_pressed && !_hand && !counted) {
             _anyClick    = true;
             _lastClickMs = nowMs;
@@ -155,10 +163,12 @@ void PressureDetector::update(unsigned long nowMs) {
     }
 
     // --- hand: sustained rise above the rest level
-    float e       = _x - _rest;
+    float aboveRest       = _smoothed - _rest;
     float handThr = fmaxf(K_HAND * _restNoise, HAND_MIN_V);
     if (_pendingClick) {
-        bool back = _hand ? (c - _local < _clickThr) : (c - _rest < handThr);
+        bool back;
+        if (_hand) back = sig - _local < _clickThr;  // back to the hand level
+        else       back = sig - _rest  < handThr;    // back to the rest level
         if (back) {                                        // back down: a real click
             _pendingClick = false;
             sendClick();
@@ -166,14 +176,15 @@ void PressureDetector::update(unsigned long nowMs) {
             _pendingClick = false;
         }
     }
-    if (_x < _rest) {
-        _rest += (_x - _rest) * A_REST_DN;
-    } else if (!_hand && !_inPulse && e < handThr) {
-        _rest += (_x - _rest) * A_REST_UP;
+    if (_smoothed < _rest) {
+        _rest += (_smoothed - _rest) * A_REST_DN;
+    } else if (!_hand && !_inPulse && aboveRest < handThr) {
+        _rest += (_smoothed - _rest) * A_REST_UP;
     }
 
-    if (e > handThr) { _aboveMs += READ_INTERVAL_MS; _belowMs = 0; }
-    else             { _belowMs += READ_INTERVAL_MS; _aboveMs = 0; }
+    // how long the level has been above / below the hand threshold
+    if (aboveRest > handThr) { _aboveMs += READ_INTERVAL_MS; _belowMs = 0; }
+    else                     { _belowMs += READ_INTERVAL_MS; _aboveMs = 0; }
 
     if      (!_pressed && _aboveMs >= PRESS_ON_MS)  _pressed = true;
     else if ( _pressed && _belowMs >= PRESS_OFF_MS) _pressed = false;
@@ -186,12 +197,13 @@ void PressureDetector::update(unsigned long nowMs) {
     }
 
     if (_hand) {
-        bool drifting = _noise < 2.0f * _restNoise && e < STUCK_MAX_V;
-        _stillMs = drifting ? _stillMs + READ_INTERVAL_MS : 0;
+        bool drifting = _noise < 2.0f * _restNoise && aboveRest < STUCK_MAX_V;
+        if (drifting) _stillMs += READ_INTERVAL_MS;
+        else          _stillMs  = 0;
         if (_stillMs >= STUCK_MS) {
             _hand    = false;
             _pressed = false;
-            _rest    = _x;
+            _rest    = _smoothed;
         }
     }
 }

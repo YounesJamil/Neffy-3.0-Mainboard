@@ -67,7 +67,7 @@ void PersonSensor::init() {
     Wire.begin(D6TConfig::SDA_PIN, D6TConfig::SCL_PIN);
     Wire.setClock(D6TConfig::I2C_CLOCK);
     float t = readTemp();
-    _baseline = _lastTemp = _prevTemp = isnan(t) ? 20.0f : t;
+    _baseline = _lastTemp = _prevTemp = isnan(t) ? 20.0f : t;  // no reading: 20 C until warm-up
     _lastMs   = _startMs = _flatStartMs = millis();
     _flatMin  = _flatMax = _baseline;
 }
@@ -77,7 +77,7 @@ PersonState PersonSensor::update() {
     if (isnan(temp)) return _present ? PersonState::PRESENT : PersonState::NONE; // I2C error: keep state
 
     unsigned long now = millis();
-    float dt = fminf((now - _lastMs) / 1000.0f, 1.0f);
+    float dt = fminf((now - _lastMs) / 1000.0f, 1.0f);  // seconds since the last reading, at most 1
     _lastMs  = now;
 
     _lastTemp    = temp;
@@ -98,21 +98,25 @@ PersonState PersonSensor::update() {
         _flatMin     = _flatMax = temp;
     }
 
-    float d = temp - _baseline;
+    float aboveRoom = temp - _baseline;
 
     float enter = fmaxf(K_NOISE * _noise, ENTER_MIN_C);
-    if      (!_present && d >= enter)              _present = true;
-    else if ( _present && d <  enter * LEAVE_FRAC) _present = false;
+    if      (!_present && aboveRoom >= enter)              _present = true;
+    else if ( _present && aboveRoom <  enter * LEAVE_FRAC) _present = false;
 
-    bool quiet = fabsf(d) < 3.0f * _noise + 0.2f;
-    if (!_present && quiet) _noise += (fminf(jitter, 0.5f) - _noise) * dt / TAU_NOISE_S;
+    // within the noise band around the room temperature (0.2 C margin for the 0.1 C steps)
+    bool quiet = fabsf(aboveRoom) < 3.0f * _noise + 0.2f;
+    if (!_present && quiet) _noise += (fminf(jitter, 0.5f) - _noise) * dt / TAU_NOISE_S;  // 0.5: ignore jumps
 
+    // how fast the room temperature follows the reading (see the TAU_* constants)
     float tau;
-    if      (d < 0.0f) tau = d < -2.0f * _noise ? TAU_DOWN_S : TAU_ROOM_S;
-    else if (_present) tau = _flat ? TAU_FLAT_S : TAU_PRESENT_S;
-    else if (quiet)    tau = TAU_ROOM_S;
-    else               tau = TAU_WARM_S;
-    _baseline += d * fminf(dt / tau, 1.0f);
+    if (aboveRoom < -2.0f * _noise) tau = TAU_DOWN_S;   // clearly colder: follow at once
+    else if (aboveRoom < 0.0f)      tau = TAU_ROOM_S;
+    else if (_present && _flat)     tau = TAU_FLAT_S;   // "someone there" but flat: relearn
+    else if (_present)              tau = TAU_PRESENT_S;
+    else if (quiet)                 tau = TAU_ROOM_S;
+    else                            tau = TAU_WARM_S;
+    _baseline += aboveRoom * fminf(dt / tau, 1.0f);  // at most up to the reading
 
     return _present ? PersonState::PRESENT : PersonState::NONE;
 }

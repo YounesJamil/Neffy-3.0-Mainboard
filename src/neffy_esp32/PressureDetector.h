@@ -64,14 +64,14 @@ private:
     float           _thrScale;  // 1 / sensitivity
     Message         _clickMsg;
 
-    float _lastV     = 0.0f; // last raw reading (signed)
-    float _x         = 0.0f; // smoothed signal
-    float _prevC     = 0.0f; // previous click signal (raw or smoothed, see update())
-    float _local     = 0.0f; // local baseline, clicks are measured against it
-    float _rest      = 0.0f; // rest level without hand
+    float _lastV     = 0.0f;   // last raw reading (signed)
+    float _smoothed  = 0.0f;   // smoothed signal
+    float _prevSig   = 0.0f;   // previous click signal (raw or smoothed, see update())
+    float _local     = 0.0f;   // local baseline, clicks are measured against it
+    float _rest      = 0.0f;   // rest level without hand
     float _noise     = 0.001f; // jitter, always
     float _restNoise = 0.001f; // jitter without hand
-    float _clickAmp  = 0.0f; // learned typical click height, 0 = none yet
+    float _clickAmp  = 0.0f;   // learned typical click height, 0 = none yet
     float _clickThr  = 0.0f;
 
     bool          _inPulse      = false;

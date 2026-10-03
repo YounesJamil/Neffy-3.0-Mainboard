@@ -13,14 +13,19 @@ static void noteHeadTarget(float targetDeg) {
     if (targetDeg > headPositionDeg + 0.5f) headTopDeg = fminf(targetDeg, BoardConfig::MAX_POSITION_HEAD_DEG);
 }
 
+// Two payload bytes as one number, high byte first (e.g. 00 C8 = 200).
+static inline uint16_t readU16(const Message& msg, uint8_t i) {
+    return ((uint16_t)msg.buffer[i] << 8) | msg.buffer[i + 1];
+}
+
 void moveBody(Message& msg) {
 
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_BODY_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
 
-    cmd.position = (((uint16_t)msg.buffer[0] << 8) | msg.buffer[1]) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
-    cmd.duration = (((uint16_t)msg.buffer[2] << 8) | msg.buffer[3]) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
 
     if(motorQueueBody != NULL) xQueueOverwrite(motorQueueBody, &cmd);
 
@@ -33,8 +38,8 @@ void moveHead(Message& msg) {
 
     ExchangeMotorData cmd;
 
-    cmd.position = (((uint16_t)msg.buffer[0] << 8) | msg.buffer[1]) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
-    cmd.duration = (((uint16_t)msg.buffer[2] << 8) | msg.buffer[3]) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
 
     noteHeadTarget(cmd.position);
     if(motorQueueHead != NULL) xQueueOverwrite(motorQueueHead, &cmd);
@@ -48,13 +53,13 @@ void moveBodyAndHead(Message& msg) {
 
     ExchangeMotorData cmd;
 
-    cmd.position = (((uint16_t)msg.buffer[0] << 8) | msg.buffer[1]) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
-    cmd.duration = (((uint16_t)msg.buffer[2] << 8) | msg.buffer[3]) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
 
     if(motorQueueBody != NULL) xQueueOverwrite(motorQueueBody, &cmd);
 
-    cmd.position = (((uint16_t)msg.buffer[4] << 8) | msg.buffer[5]) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
-    cmd.duration = (((uint16_t)msg.buffer[6] << 8) | msg.buffer[7]) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    cmd.position = readU16(msg, 4) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    cmd.duration = readU16(msg, 6) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
 
     noteHeadTarget(cmd.position);
     if(motorQueueHead != NULL) xQueueOverwrite(motorQueueHead, &cmd);
@@ -161,21 +166,21 @@ void motorCoreControlLoop(void* args) {
         headPositionDeg = motorHead.getPosition();
 
         //Check if the motion was completed. If so, send the corresponding response
-        if(body_motion_active == true && stateBody == IDLE) {
+        if(body_motion_active && stateBody == IDLE) {
 
             uint16_t bodyPos = static_cast<uint16_t>(motorBody.getPosition() * NeffyResponse::MOVE_BODY_IN_TIME.scaleFactor);
-            responseBody.buffer[0] = bodyPos  >>  8;
-            responseBody.buffer[1] = bodyPos & 0xFF;
+            responseBody.buffer[0] = bodyPos  >>  8;   // high byte first
+            responseBody.buffer[1] = bodyPos & 0xFF;   // then low byte
             interface.writeMessage(responseBody);
 
             body_motion_active = false;
         }
 
-        if(head_motion_active == true && stateHead == IDLE) {
+        if(head_motion_active && stateHead == IDLE) {
 
             uint16_t headPos = static_cast<uint16_t>(motorHead.getPosition() * NeffyResponse::MOVE_HEAD_IN_TIME.scaleFactor);
-            responseHead.buffer[0] = headPos  >>  8;
-            responseHead.buffer[1] = headPos & 0xFF;
+            responseHead.buffer[0] = headPos  >>  8;   // high byte first
+            responseHead.buffer[1] = headPos & 0xFF;   // then low byte
             interface.writeMessage(responseHead);
 
             head_motion_active = false;

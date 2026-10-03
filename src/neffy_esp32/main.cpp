@@ -68,7 +68,7 @@ static void setSpeakerMuted(bool muted) {
 }
 
 static void onMute(Message& msg) {
-    if (msg.bytes_in_buffer >= 1) setSpeakerMuted(msg.buffer[0] == 0x01);
+    if (msg.bytes_in_buffer >= 1) setSpeakerMuted(msg.buffer[0] == 0x01);  // 1 = mute, 0 = sound on
 }
 
 // level 0 = idle glow, 1 = full. Cubic because the eye perceives brightness
@@ -77,8 +77,10 @@ template <size_t N>
 static void fillLevel(CRGB (&strip)[N], float level) {
     using namespace LedConfig;
     level = constrain(level, 0.0f, 1.0f);
+    float   perceived  = level * level * level;
+    uint8_t brightness = MIN_BRIGHT + (uint8_t)((255 - MIN_BRIGHT) * perceived);  // MIN_BRIGHT..255
     CRGB color(COLOR_R, COLOR_G, COLOR_B);
-    color.nscale8(MIN_BRIGHT + (uint8_t)((255 - MIN_BRIGHT) * level * level * level));
+    color.nscale8(brightness);
     fill_solid(strip, N, color);
 }
 
@@ -92,10 +94,10 @@ static void listenOnPad(uart_port_t uart, uint8_t pin) {
     cfg.stop_bits  = UART_STOP_BITS_1;
     cfg.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
     cfg.source_clk = UART_SCLK_APB;
-    uart_driver_install(uart, 512, 0, 0, nullptr, 0);
+    uart_driver_install(uart, 512, 0, 0, nullptr, 0);  // 512 B receive buffer, receive only
     uart_param_config(uart, &cfg);
-    PIN_INPUT_ENABLE(GPIO_PIN_MUX_REG[pin]);
-    esp_rom_gpio_connect_in_signal(pin, uart_periph_signal[uart].pins[SOC_UART_RX_PIN_IDX].signal, false);
+    PIN_INPUT_ENABLE(GPIO_PIN_MUX_REG[pin]);           // read the pad, its output stays as is
+    esp_rom_gpio_connect_in_signal(pin, uart_periph_signal[uart].pins[SOC_UART_RX_PIN_IDX].signal, false);  // pad -> RX
 }
 
 static void startUartMonitor() {
@@ -111,7 +113,7 @@ static void startUartMonitor() {
 
 struct FrameReader {
     const char* dir;
-    uint8_t     frame[3 + 16];
+    uint8_t     frame[3 + 16];  // header (FA, id, length) + up to 16 payload bytes
     uint8_t     have;
 };
 
@@ -124,7 +126,9 @@ static void printFrames(uart_port_t uart, FrameReader& r) {
             continue;
         }
         r.frame[r.have++] = byte;
-        if (r.have >= 3 && (r.have == 3 + r.frame[2] || r.have == sizeof(r.frame))) {
+        bool complete   = r.have >= 3 && r.have == 3 + r.frame[2];  // frame[2] = payload length
+        bool bufferFull = r.have == sizeof(r.frame);
+        if (complete || bufferFull) {
             Serial.printf("%s %lu", r.dir, (unsigned long)millis());
             for (uint8_t i = 0; i < r.have; i++) Serial.printf(" %02X", r.frame[i]);
             Serial.println();
@@ -198,6 +202,7 @@ void loop() {
         pocketL.setMuted(true);
         pocketR.setMuted(true);
     }
+    // update() returns true once, when the 30 s are over and the result is sent
     if (breathing.running() && breathing.update(millis(), pocketL.pressed() || pocketR.pressed())) {
         pocketL.setMuted(false);
         pocketR.setMuted(false);
@@ -223,19 +228,24 @@ void loop() {
     static float    breath    = 0.0f;  // breathing boost, 0..1
     static float    clickL    = 0.0f, clickR = 0.0f;
     static uint32_t lastLedMs = 0;
-    float dt     = (millis() - lastLedMs) / 1000.0f;
+    float dt     = (millis() - lastLedMs) / 1000.0f;  // seconds since the last loop
     lastLedMs    = millis();
-    float base   = constrain(motorsHomed ? headPositionDeg / fmaxf(headTopDeg, 1.0f) : 0.0f, 0.0f, 1.0f);
+    // 0 = head down .. 1 = head at its wake-up target; dark until homed
+    float base = 0.0f;
+    if (motorsHomed) base = constrain(headPositionDeg / fmaxf(headTopDeg, 1.0f), 0.0f, 1.0f);
     float pocket = fminf(base, POCKET_MAX_LEVEL);
     bool inhale  = breathing.running() && (pocketL.pressed() || pocketR.pressed());
     if (inhale && breath < pocket) breath = pocket;  // rise from what is lit now
-    breath += inhale ? dt / BREATH_RISE_S : -dt / BREATH_FALL_S;
-    breath  = constrain(breath, 0.0f, 1.0f);
+    if (inhale) breath += dt / BREATH_RISE_S;  // inhaling: brighter
+    else        breath -= dt / BREATH_FALL_S;  // exhaling: darker
+    breath = constrain(breath, 0.0f, 1.0f);
     // During breathing a press is an inhale, not a click: no flash then.
     bool flashL = pocketL.click() && !breathing.running();
     bool flashR = pocketR.click() && !breathing.running();
-    clickL  = flashL ? 1.0f : fmaxf(clickL - dt / CLICK_FADE_S, 0.0f);
-    clickR  = flashR ? 1.0f : fmaxf(clickR - dt / CLICK_FADE_S, 0.0f);
+    // a click jumps to full, then fades out
+    clickL = flashL ? 1.0f : fmaxf(clickL - dt / CLICK_FADE_S, 0.0f);
+    clickR = flashR ? 1.0f : fmaxf(clickR - dt / CLICK_FADE_S, 0.0f);
+    // each strip shows the brightest of: head level, breathing, click flash
     fillLevel(ledsPocketL, fmaxf(fmaxf(pocket, breath), clickL));
     fillLevel(ledsPocketR, fmaxf(fmaxf(pocket, breath), clickR));
     fillLevel(ledsRing,    fmaxf(base, breath));

@@ -22,7 +22,7 @@ void BreathingDetection::start(unsigned long nowMs) {
 bool BreathingDetection::update(unsigned long nowMs, bool pressed) {
     if (!_running) return false;
 
-    if (pressed && !_wasPressed) {
+    if (pressed && !_wasPressed) {        // press starts = inhale starts
         if (_inhales == 0) _firstInhaleMs = nowMs;
         _lastInhaleMs = nowMs;
         _inhales++;
@@ -34,8 +34,9 @@ bool BreathingDetection::update(unsigned long nowMs, bool pressed) {
 
     if (_inhales < 2) return true; // no rate without two inhales: send nothing
 
+    // n inhales = n - 1 full breaths between the first and the last one
     float meanCycleMs = (float)(_lastInhaleMs - _firstInhaleMs) / (_inhales - 1);
-    _breathsPer30s    = SESSION_MS / meanCycleMs;
+    _breathsPer30s    = SESSION_MS / meanCycleMs;  // e.g. one breath per 6 s -> 5 per 30 s
 
     MessageMetadata cmd;
     if (_breathsPer30s <= RELAXED_MAX_PER_30S) {
