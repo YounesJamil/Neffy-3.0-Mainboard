@@ -64,9 +64,6 @@ upload reboots the chip into its bootloader, and `tools/reset_after_upload.py`
 starts the firmware afterwards. A red "serial exception" line at the end of an
 upload is harmless as long as it ends with `SUCCESS`.
 
-The other `neffy_*_test` environments in `platformio.ini` belong to hardware
-test sketches that are kept locally and are not part of this repository.
-
 ## Configuration
 
 All pins, hardware constants, timings and LED behaviour are in
@@ -85,14 +82,34 @@ Over the USB port (silent unless switched on, no reflash needed):
 | `T` / `t` | thermal sensor readings | `tools/thermal_log.py` (guided recording) |
 | `M` / `m` | speaker muted / sound on | |
 
-Run the tools from the project folder with the Python that comes with PlatformIO:
+### Watching the UART traffic (Windows cmd)
 
-```
-"%USERPROFILE%\.platformio\penv\Scripts\python.exe" tools\uart_monitor.py
-```
+1. Connect the mainboard over USB with the firmware running (it shows up as a
+   COM port; the tool finds it by itself).
+2. Open `cmd` and change into the project folder:
+   ```
+   cd "C:\path\to\Neffy-3.0-Mainboard"
+   ```
+3. Start the monitor with the Python that comes with PlatformIO:
+   ```
+   "%USERPROFILE%\.platformio\penv\Scripts\python.exe" tools\uart_monitor.py
+   ```
+4. Every message between the two boards appears live, with time, direction,
+   raw bytes, command name and what the payload means:
+   ```
+   18:31:12  tx  FA 03 01 01                       GET_PERSON_READING      someone there
+   18:31:12  rx  FA 06 08 00 00 00 28 00 C8 00 28  MOVE_BODY_HEAD_IN_TIME  body to 0.0 mm in 4.0 s, head to 20.0 deg in 4.0 s
+   18:31:16  tx  FA 05 02 00 C8                    MOVE_HEAD_IN_TIME       reached 20.0 deg
+   18:31:20  tx  FA 0B 00                          PRESSURE_CLICK_R
+   ```
+   `tx` = sent by the mainboard, `rx` = received from the other board. The
+   person reading repeats every 500 ms, so only its changes are shown; the full
+   log, repeats included, is saved to `logs/uart-<date>.txt`.
+5. Stop with `Ctrl+C`.
 
-Only one program can use the USB port at a time: stop a running tool
-(`Ctrl+C`) before uploading.
+The other tools are started the same way (`tools\pocket_log.py`,
+`tools\thermal_log.py`). Only one program can use the USB port at a time:
+stop a running tool before uploading.
 
 ## Layout
 
@@ -106,9 +123,31 @@ src/neffy_esp32/      firmware
   PressureDetector.*    click detection on one pocket
   BreathingDetection.*  30 s breathing exercise
   VoltageReader.*       calibrated ADC readings
+src/tests/            hardware test sketches (see Tests)
 boards/, variants/    board definition and pin variant for PlatformIO
 tools/                upload helper and debug tools (Python)
 ```
 
 The motors run in their own task on core 0; UART, sensors and LEDs on core 1,
 because the stepper interrupt and the LED output must not share a core.
+
+## Tests
+
+Small standalone sketches in `src/tests/` for checking single parts of the
+hardware without the full firmware. Each has its own PlatformIO environment;
+flash one, check the part, then flash `neffy_esp32` again.
+
+| Environment | Sketch | Checks |
+|---|---|---|
+| `neffy_blink_test` | `blink` | The board is alive: the onboard LED blinks, "PIN HIGH / LOW" over USB |
+| `neffy_led_test` | `led` | LED wiring: the ring lights up in full yellow |
+| `neffy_led_fade_test` | `led_fade` | LED brightness control: the ring fades in and out |
+| `neffy_stepper_test` | `stepper` | Body axis: moves 20 mm back and forth, LEDs follow the position |
+| `neffy_stepper_head_test` | `stepper_head` | Head axis: homes, then moves up and down, LEDs follow the position |
+| `neffy_pressure_click_test` | `pressure_click` | Pockets: the firmware's click detection with light response (a click flashes its pocket's LEDs), plus both pocket voltages every 20 ms (record with `tools/pocket_log.py`) |
+| `neffy_person_sensor_test` | `person_sensor` | Thermal sensor: raw readings; read interval and I2C clock switchable over USB |
+| `neffy_person_command_test` | `person_command` | The other board's reaction: sends `GET_PERSON_READING` 0 / 1 alternately every 5 s, without the sensor |
+
+```
+pio run -e neffy_stepper_head_test -t upload
+```

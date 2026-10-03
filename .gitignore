@@ -5,9 +5,6 @@
 .vscode/launch.json
 .vscode/ipch
 
-# Hardware test sketches stay local
-src/tests/
-
 # Serial monitor logs (pio device monitor -f log2file)
 logs/
 
