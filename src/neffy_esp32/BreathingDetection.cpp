@@ -38,22 +38,23 @@ bool BreathingDetection::update(unsigned long nowMs, bool pressed) {
     float meanCycleMs = (float)(_lastInhaleMs - _firstInhaleMs) / (_inhales - 1);
     _breathsPer30s    = SESSION_MS / meanCycleMs;  // e.g. one breath per 6 s -> 5 per 30 s
 
-    MessageMetadata cmd;
-    if (_breathsPer30s <= RELAXED_MAX_PER_30S) {
-        _result = BreathingResult::RELAXED;
-        cmd     = NeffyCommands::BREATHING_DETECTION_RELAXED;
-    } else if (_breathsPer30s <= NORMAL_MAX_PER_30S) {
-        _result = BreathingResult::NORMAL;
-        cmd     = NeffyCommands::BREATHING_DETECTION_NORMAL;
-    } else {
-        _result = BreathingResult::STRESSED;
-        cmd     = NeffyCommands::BREATHING_DETECTION_STRESSED;
-    }
-
+    // Only single fields of the library's command constants are read: copying a
+    // whole constant needs its address, which the library never defines.
     Message msg;
-    msg.command         = cmd.id;
-    msg.bytes_in_buffer = cmd.payloadLength;
-    msg.buffer[0]       = 0x00;
+    if (_breathsPer30s <= RELAXED_MAX_PER_30S) {
+        _result             = BreathingResult::RELAXED;
+        msg.command         = NeffyCommands::BREATHING_DETECTION_RELAXED.id;
+        msg.bytes_in_buffer = NeffyCommands::BREATHING_DETECTION_RELAXED.payloadLength;
+    } else if (_breathsPer30s <= NORMAL_MAX_PER_30S) {
+        _result             = BreathingResult::NORMAL;
+        msg.command         = NeffyCommands::BREATHING_DETECTION_NORMAL.id;
+        msg.bytes_in_buffer = NeffyCommands::BREATHING_DETECTION_NORMAL.payloadLength;
+    } else {
+        _result             = BreathingResult::STRESSED;
+        msg.command         = NeffyCommands::BREATHING_DETECTION_STRESSED.id;
+        msg.bytes_in_buffer = NeffyCommands::BREATHING_DETECTION_STRESSED.payloadLength;
+    }
+    msg.buffer[0] = 0x00;
     _iface.writeMessage(msg);
     return true;
 }

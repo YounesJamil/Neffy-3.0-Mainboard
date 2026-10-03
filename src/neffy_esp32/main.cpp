@@ -119,13 +119,13 @@ struct FrameReader {
 
 // Prints every complete frame a monitor UART has read.
 static void printFrames(uart_port_t uart, FrameReader& r) {
-    uint8_t byte;
-    while (uart_read_bytes(uart, &byte, 1, 0) == 1) {
-        if (r.have == 0 && byte != START_OF_FRAME_IDENTIFIER) {
-            Serial.printf("%s %lu stray %02X\n", r.dir, (unsigned long)millis(), byte);
+    uint8_t in;
+    while (uart_read_bytes(uart, &in, 1, 0) == 1) {
+        if (r.have == 0 && in != START_OF_FRAME_IDENTIFIER) {
+            Serial.printf("%s %lu stray %02X\n", r.dir, (unsigned long)millis(), in);
             continue;
         }
-        r.frame[r.have++] = byte;
+        r.frame[r.have++] = in;
         bool complete   = r.have >= 3 && r.have == 3 + r.frame[2];  // frame[2] = payload length
         bool bufferFull = r.have == sizeof(r.frame);
         if (complete || bufferFull) {

@@ -13,6 +13,12 @@ static void noteHeadTarget(float targetDeg) {
     if (targetDeg > headPositionDeg + 0.5f) headTopDeg = fminf(targetDeg, BoardConfig::MAX_POSITION_HEAD_DEG);
 }
 
+// Position for a MOVE_* response: rounded (19.99 deg must report 20.0, not 19.9)
+// and never below 0, which would wrap around as an unsigned number.
+static inline uint16_t responseValue(float position, float scaleFactor) {
+    return static_cast<uint16_t>(lroundf(fmaxf(position, 0.0f) * scaleFactor));
+}
+
 // Two payload bytes as one number, high byte first (e.g. 00 C8 = 200).
 static inline uint16_t readU16(const Message& msg, uint8_t i) {
     return ((uint16_t)msg.buffer[i] << 8) | msg.buffer[i + 1];
@@ -168,7 +174,7 @@ void motorCoreControlLoop(void* args) {
         //Check if the motion was completed. If so, send the corresponding response
         if(body_motion_active && stateBody == IDLE) {
 
-            uint16_t bodyPos = static_cast<uint16_t>(motorBody.getPosition() * NeffyResponse::MOVE_BODY_IN_TIME.scaleFactor);
+            uint16_t bodyPos = responseValue(motorBody.getPosition(), NeffyResponse::MOVE_BODY_IN_TIME.scaleFactor);
             responseBody.buffer[0] = bodyPos  >>  8;   // high byte first
             responseBody.buffer[1] = bodyPos & 0xFF;   // then low byte
             interface.writeMessage(responseBody);
@@ -178,7 +184,7 @@ void motorCoreControlLoop(void* args) {
 
         if(head_motion_active && stateHead == IDLE) {
 
-            uint16_t headPos = static_cast<uint16_t>(motorHead.getPosition() * NeffyResponse::MOVE_HEAD_IN_TIME.scaleFactor);
+            uint16_t headPos = responseValue(motorHead.getPosition(), NeffyResponse::MOVE_HEAD_IN_TIME.scaleFactor);
             responseHead.buffer[0] = headPos  >>  8;   // high byte first
             responseHead.buffer[1] = headPos & 0xFF;   // then low byte
             interface.writeMessage(responseHead);

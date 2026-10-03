@@ -61,6 +61,7 @@ float PressureDetector::readSigned() {
 void PressureDetector::init() {
     _smoothed = _local = _rest = _prevSig = readSigned();
 
+    // single fields only, see BreathingDetection::update()
     if (_isLeft) {
         _clickMsg.command         = NeffyCommands::PRESSURE_CLICK_L.id;
         _clickMsg.bytes_in_buffer = NeffyCommands::PRESSURE_CLICK_L.payloadLength;
@@ -154,7 +155,9 @@ void PressureDetector::update(unsigned long nowMs) {
     if (_evActive && nowMs - _evLastMs >= EVENT_GAP_MS) {
         _evActive = false;
         bool bothWays = fminf(_evUp, _evDn) >= stepThr;
-        bool counted  = _anyClick && _lastClickMs + SAME_EVENT_MS >= _evStartMs;  // pulse click got it
+        // a pulse click at most SAME_EVENT_MS before the jump (or after it) already counted it;
+        // signed difference, so this also holds when millis() wraps after ~49 days
+        bool counted  = _anyClick && (int32_t)(_evStartMs - _lastClickMs) <= (int32_t)SAME_EVENT_MS;
         if (bothWays && !_evSkip && !_pressed && !_hand && !counted) {
             _anyClick    = true;
             _lastClickMs = nowMs;
