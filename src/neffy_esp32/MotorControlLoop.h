@@ -19,8 +19,9 @@ extern volatile float headTopDeg;
 
 struct ExchangeMotorData{
 
-    float position = 0;
-    float duration = 0;
+    float    position  = 0;
+    float    duration  = 0;
+    uint32_t startAtMs = 0;   // millis() before which the move must not start, 0 = at once
 };
 
 /**
@@ -40,6 +41,13 @@ void moveHead(Message& msg);
  * @param msg Message struct that was received over UART
  */
 void moveBodyAndHead(Message& msg);
+
+/**
+ * @brief DISABLE_MOTORS: holds the next move back by MOVE_DELAY_AFTER_DISABLE_MS
+ * (see config.h). The motors stay on.
+ * @param msg Message struct that was received over UART (payload not used)
+ */
+void disableMotors(Message& msg);
 
 /**
  * Homes both motors, then runs MOVE_* commands from the queues. Runs as its own

@@ -70,6 +70,12 @@ namespace BoardConfig {
     constexpr int8_t HOME_DIR_HEAD           = 1;    // 1 = home BACKWARD, 0 = home FORWARD
     constexpr bool   HEAD_DIR_INVERTED       = false; // flips the head motor direction (depends on coil wiring)
 
+    // The other board sends DISABLE_MOTORS when a guided breathing exercise starts;
+    // its screen animation appears about half a second after the first move
+    // command, so the first move after DISABLE_MOTORS starts this much later.
+    // The motors are not switched off.
+    constexpr uint32_t MOVE_DELAY_AFTER_DISABLE_MS = 500;
+
     // Main loop on core 1 (UART, pockets, thermal sensor, LEDs).
     constexpr uint32_t LOOP_DELAY_MS         = 20;
     // The D6T delivers a new value about every 100 ms; polled faster (20 ms) it

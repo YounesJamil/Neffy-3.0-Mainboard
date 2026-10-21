@@ -31,6 +31,7 @@ Every message is `FA <id> <length> <payload…>`, 115200 baud, on GPIO 43 (TX) a
 | `0x04` | `MOVE_BODY_IN_TIME` | 4 bytes: target position (mm × 10), duration (s × 10) |
 | `0x05` | `MOVE_HEAD_IN_TIME` | 4 bytes: target angle (deg × 10), duration (s × 10) |
 | `0x06` | `MOVE_BODY_HEAD_IN_TIME` | 8 bytes: body position and duration, then head angle and duration |
+| `0x07` | `DISABLE_MOTORS` | 1 byte (not used). Sent at the start of a guided breathing exercise: the next `MOVE_*` starts 0.5 s later, to match the screen animation. The motors stay on. |
 | `0x10` | `BREATHING_DETECTION_START` | 1 byte `00`: start the 30 s breathing detection |
 
 **Sent by the mainboard**
@@ -42,8 +43,7 @@ Every message is `FA <id> <length> <payload…>`, 115200 baud, on GPIO 43 (TX) a
 | `0x04` / `0x05` | move finished (response to `MOVE_*`) | 2 bytes: position reached (mm × 10 / deg × 10) |
 | `0x0F` / `0x0D` / `0x0E` | `BREATHING_DETECTION_RELAXED` / `_NORMAL` / `_STRESSED` | 1 byte `00`; nothing is sent if there were fewer than two inhales |
 
-`DISABLE_MOTORS` (`0x07`) and `BREATHING_RATE` (`0x09`) are in the protocol but
-not handled by this firmware.
+`BREATHING_RATE` (`0x09`) is in the protocol but not handled by this firmware.
 
 ## Building and flashing
 

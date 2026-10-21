@@ -4,7 +4,9 @@
 //   - both pockets report clicks (PRESSURE_CLICK_L/R)
 //   - BREATHING_DETECTION_START runs a 30 s breathing exercise on the pockets and answers
 //     BREATHING_DETECTION_RELAXED / _NORMAL / _STRESSED; clicks pause meanwhile
-//   - all motor moves arrive as MOVE_* commands and run in MotorControlLoop
+//   - all motor moves arrive as MOVE_* commands and run in MotorControlLoop; the
+//     first move after DISABLE_MOTORS (start of a guided breathing exercise)
+//     starts 0.5 s later to match the screen animation
 //   - MUTE switches the speaker (payload 1 = muted, 0 = sound on)
 //   - the LEDs follow the real head position: down = faint glow, full when the
 //     head reaches its wake-up target; during breathing detection all LEDs grow

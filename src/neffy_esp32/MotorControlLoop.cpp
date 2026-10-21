@@ -21,6 +21,25 @@ static inline uint16_t responseValue(float position, float scaleFactor) {
     return static_cast<uint16_t>(lroundf(fmaxf(position, 0.0f) * scaleFactor));
 }
 
+// Delay of the first move after DISABLE_MOTORS (see MOVE_DELAY_AFTER_DISABLE_MS).
+// Moves arriving within that delay wait for the same moment, so a move split into
+// a body and a head command stays in step. Set and read on core 1 (UART callbacks).
+static volatile bool     moveDelayArmed = false;
+static volatile uint32_t moveDelayUntil = 0;
+
+void disableMotors(Message&) { moveDelayArmed = true; }
+
+// Start time for a move received now: 0 = at once.
+static uint32_t moveStartMs() {
+    uint32_t now = millis();
+    if(moveDelayArmed) {
+        moveDelayArmed = false;
+        moveDelayUntil = now + BoardConfig::MOVE_DELAY_AFTER_DISABLE_MS;
+    }
+    if((int32_t)(moveDelayUntil - now) > 0) return moveDelayUntil;
+    return 0;
+}
+
 // Two payload bytes as one number, high byte first (e.g. 00 C8 = 200).
 static inline uint16_t readU16(const Message& msg, uint8_t i) {
     return ((uint16_t)msg.buffer[i] << 8) | msg.buffer[i + 1];
@@ -31,6 +50,7 @@ void moveBody(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_BODY_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
+    cmd.startAtMs = moveStartMs();
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
@@ -45,6 +65,7 @@ void moveHead(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_HEAD_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
+    cmd.startAtMs = moveStartMs();
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
@@ -60,6 +81,7 @@ void moveBodyAndHead(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_BODY_HEAD_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
+    cmd.startAtMs = moveStartMs();   // same moment for body and head
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
@@ -139,10 +161,14 @@ void motorCoreControlLoop(void* args) {
     bool body_motion_active = false;
     bool head_motion_active = false;
 
+    ExchangeMotorData pendingBody, pendingHead;   //moves waiting for their start time
+    bool bodyPending = false, headPending = false;
+
     //Add the receiving methods to the neffy interface
     interface.addMethod(NeffyCommands::MOVE_BODY_IN_TIME.id, &moveBody);
     interface.addMethod(NeffyCommands::MOVE_HEAD_IN_TIME.id, &moveHead);
     interface.addMethod(NeffyCommands::MOVE_BODY_HEAD_IN_TIME.id, &moveBodyAndHead);
+    interface.addMethod(NeffyCommands::DISABLE_MOTORS.id, &disableMotors);
 
     //Add the motors to the controller so that they receive stepping pulses
     controller.addMotor(&motorBody);
@@ -185,16 +211,22 @@ void motorCoreControlLoop(void* args) {
     //Motor Control Loop
     while (true) {
 
-        if(xQueueReceive(motorQueueBody, &cmd, 0) == pdTRUE) {
+        //A move waits until its start time (see moveStartMs); a newer one replaces it
+        if(xQueueReceive(motorQueueBody, &cmd, 0) == pdTRUE) { pendingBody = cmd; bodyPending = true; }
+        if(xQueueReceive(motorQueueHead, &cmd, 0) == pdTRUE) { pendingHead = cmd; headPending = true; }
 
-            motorBody.moveToPositionInTime(cmd.position,  cmd.duration);
+        if(bodyPending && (pendingBody.startAtMs == 0 || (int32_t)(millis() - pendingBody.startAtMs) >= 0)) {
+
+            motorBody.moveToPositionInTime(pendingBody.position, pendingBody.duration);
             body_motion_active = true;
+            bodyPending        = false;
         }
 
-        if(xQueueReceive(motorQueueHead, &cmd, 0) == pdTRUE) {
+        if(headPending && (pendingHead.startAtMs == 0 || (int32_t)(millis() - pendingHead.startAtMs) >= 0)) {
 
-            motorHead.moveToPositionInTime(cmd.position,  cmd.duration);
+            motorHead.moveToPositionInTime(pendingHead.position, pendingHead.duration);
             head_motion_active = true;
+            headPending        = false;
         }
 
         stateBody = motorBody.update();
