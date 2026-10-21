@@ -12,8 +12,8 @@ UART, and the mainboard reports back what it senses.
 | **Person sensor** (Omron D6T thermal sensor, I2C) | Reports whether someone is in front of Neffy: `1` while it is at least ~1 °C warmer than the learned room temperature (someone standing in front gives +4..6 °C, 1 m away about +2 °C), `0` otherwise. Read every 100 ms, sent on every change and repeated every 500 ms. The room temperature and the threshold adapt to the room and the sensor noise. |
 | **Pockets** (two velostat pressure pads) | Report clicks, left and right. The detector calibrates itself (rest level, noise, typical click height) and also catches light clicks. Per-pocket fine-tuning: `PRESSURE_SENSITIVITY_L/R` in `config.h`. |
 | **Breathing detection** | On request, a 30 s exercise: press a pocket while inhaling, let go while exhaling. The breathing rate is taken from the mean time between inhales and answered as relaxed / normal / stressed. |
-| **Motors** (body = linear axis, head = rotation; TMC2225 stepper drivers) | Home against their endstops at every start, then only move on `MOVE_*` commands. Each finished move is answered with the position reached. |
-| **LEDs** (WS2812B: a strip under each pocket, a ring of 12) | Follow the head: dim when it is down, full when it reaches its wake-up position, over the whole move. A click flashes its pocket strip; during breathing detection all LEDs grow brighter while inhaling. |
+| **Motors** (body = linear axis, head = rotation; TMC2225 stepper drivers) | Home against their endstops at every start (an axis already sitting on its endstop first moves off it), then only move on `MOVE_*` commands. Each finished move is answered with the position reached. |
+| **LEDs** (WS2812B: a strip under each pocket, a ring of 12) | Follow the head: dim when it is down, full when it reaches its wake-up position, over the whole move. During breathing detection all LEDs grow brighter while inhaling. |
 | **Speaker mute** | Switched by the `MUTE` command. |
 
 ## UART protocol

@@ -21,6 +21,7 @@
 
 static constexpr uint32_t SAMPLE_INTERVAL_MS = 20;
 static constexpr float    POCKET_IDLE_LEVEL  = 0.3f;   // steady glow between clicks (0..1)
+static constexpr float    CLICK_FADE_S       = 0.3f;   // click flash fades out within this
 
 static NeffyInterface   interface;   // the detector needs one; it stays muted
 static VoltageReader    voltageL(BoardConfig::PRESSURE_PIN_L, BoardConfig::PRESSURE_SAMPLES);
@@ -81,7 +82,7 @@ void loop() {
 
     // a click jumps to full, then fades out within CLICK_FADE_S
     static float flashL = 0.0f, flashR = 0.0f;
-    float step = SAMPLE_INTERVAL_MS / 1000.0f / LedConfig::CLICK_FADE_S;
+    float step = SAMPLE_INTERVAL_MS / 1000.0f / CLICK_FADE_S;
     flashL = clickL ? 1.0f : fmaxf(flashL - step, 0.0f);
     flashR = clickR ? 1.0f : fmaxf(flashR - step, 0.0f);
     fillLevel(ledsL, fmaxf(POCKET_IDLE_LEVEL, flashL));

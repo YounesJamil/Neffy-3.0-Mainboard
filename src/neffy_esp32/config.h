@@ -50,6 +50,10 @@ namespace BoardConfig {
     // Homing per axis: travel range measured from the endstop, approach speed, and
     // the back-off kept as a safety margin after the switch is found.
     constexpr float  MAX_POSITION_BODY_MM    = 85.0f;
+    // An axis that already sits on its endstop at power-up first moves this far
+    // away (up to 3 times) before homing: the endstop is only detected when it
+    // gets pressed, so homing from a pressed switch drove into the hard stop.
+    constexpr float  HOME_CLEAR_BODY_MM      = 5.0f;
     constexpr float  HOMING_SPEED_BODY_MM_S  = 4.0f;
     constexpr float  HOME_BACKOFF_BODY_MM    = 2.0f;
     constexpr int8_t HOME_DIR_BODY           = 1;    // 1 = home BACKWARD, 0 = home FORWARD
@@ -60,6 +64,7 @@ namespace BoardConfig {
     // 0.25 deg rounded down to a single microstep (0.34 deg), the switch stayed pressed,
     // and homing hung in an endless hit/recover loop.
     constexpr float  HOME_BACKOFF_HEAD_DEG   = 2.0f;
+    constexpr float  HOME_CLEAR_HEAD_DEG     = 5.0f;   // see HOME_CLEAR_BODY_MM
     constexpr float  MAX_POSITION_HEAD_DEG   = 32.0f; // back-off + range stays within the ~34 deg
     constexpr float  HOMING_SPEED_HEAD_DEG_S = 5.0f;
     constexpr int8_t HOME_DIR_HEAD           = 1;    // 1 = home BACKWARD, 0 = home FORWARD
@@ -94,10 +99,6 @@ namespace LedConfig {
     // Brightness follows the head over the whole move: down = MIN_BRIGHT, full
     // exactly when the head reaches the target of its last upward move (wake-up
     // and going to sleep take as long as the motor).
-    // Pocket strips stay at or below this level (0..1, cubic), so a click
-    // flashing them to full is still visible with the head up.
-    constexpr float   POCKET_MAX_LEVEL = 0.7f;
-    constexpr float   CLICK_FADE_S     = 0.3f;   // click flash fades back within this
     // Breathing: while inhaling (pocket pressed) all strips rise to full within
     // BREATH_RISE_S and sink back within BREATH_FALL_S while exhaling.
     constexpr float   BREATH_RISE_S    = 6.0f;

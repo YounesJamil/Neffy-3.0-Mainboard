@@ -1,5 +1,7 @@
 #include "MotorControlLoop.h"
 #include "config.h"
+#include "driver/gpio.h"
+#include "soc/gpio_struct.h"
 
 QueueHandle_t motorQueueBody = NULL;
 QueueHandle_t motorQueueHead = NULL;
@@ -73,6 +75,26 @@ void moveBodyAndHead(Message& msg) {
     return;
 }
 
+// Moves an axis off its endstop if it is already pressed (switch active-low).
+// The library only detects the switch being pressed (falling edge), so homing
+// from a pressed switch never saw an edge, drove into the hard stop and lost
+// steps. While moving away the endstop interrupt is masked, so a bounce on
+// release cannot count as a hit; an edge latched meanwhile is dropped.
+template <class Motor>
+static void moveOffEndstop(Motor& motor, uint8_t btnPin, float away, float speed) {
+    if(digitalRead(btnPin) != LOW) return;   // free: nothing to do
+
+    gpio_intr_disable((gpio_num_t)btnPin);
+    for(int tries = 0; tries < 3 && digitalRead(btnPin) == LOW; tries++) {
+
+        motor.moveToPositionInTime(motor.getPosition() + away, fabsf(away) / speed);
+        unsigned long startMs = millis();
+        while(motor.update() != IDLE && millis() - startMs < 5000) {}
+    }
+    GPIO.status_w1tc = 1UL << btnPin;        // pins 11/12: status register for GPIO 0..31
+    gpio_intr_enable((gpio_num_t)btnPin);
+}
+
 void motorCoreControlLoop(void* args) {
 
     //Task watchdog: 30 s timeout and no panic. Core 0's idle task is taken off the
@@ -128,6 +150,15 @@ void motorCoreControlLoop(void* args) {
     controller.begin();
     controller.enableStepping();
 
+    //Away from the endstop = opposite of the homing direction
+    motorHead.invertDirection(BoardConfig::HEAD_DIR_INVERTED);
+    moveOffEndstop(motorBody, BoardConfig::BTN_BODY_PIN,
+                   BoardConfig::HOME_DIR_BODY == 1 ? BoardConfig::HOME_CLEAR_BODY_MM : -BoardConfig::HOME_CLEAR_BODY_MM,
+                   BoardConfig::HOMING_SPEED_BODY_MM_S);
+    moveOffEndstop(motorHead, BoardConfig::BTN_HEAD_PIN,
+                   BoardConfig::HOME_DIR_HEAD == 1 ? BoardConfig::HOME_CLEAR_HEAD_DEG : -BoardConfig::HOME_CLEAR_HEAD_DEG,
+                   BoardConfig::HOMING_SPEED_HEAD_DEG_S);
+
     //Home both motors at the same time, then zero each one as soon as it is done.
     //home() must not be called again once it returned true: it would start a new
     //homing move.
@@ -136,7 +167,6 @@ void motorCoreControlLoop(void* args) {
                            BoardConfig::HOME_BACKOFF_BODY_MM,
                            BoardConfig::MAX_POSITION_BODY_MM);
 
-    motorHead.invertDirection(BoardConfig::HEAD_DIR_INVERTED);
     motorHead.configHoming(BoardConfig::HOME_DIR_HEAD == 1 ? BACKWARD : FORWARD,
                            BoardConfig::HOMING_SPEED_HEAD_DEG_S,
                            BoardConfig::HOME_BACKOFF_HEAD_DEG,

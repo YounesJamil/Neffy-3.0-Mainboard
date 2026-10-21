@@ -7,10 +7,8 @@
 //   - all motor moves arrive as MOVE_* commands and run in MotorControlLoop
 //   - MUTE switches the speaker (payload 1 = muted, 0 = sound on)
 //   - the LEDs follow the real head position: down = faint glow, full when the
-//     head reaches its wake-up target
-//     (pocket strips capped below full); a click flashes its pocket strip to
-//     full, and during breathing detection all LEDs grow brighter while a
-//     pocket is pressed
+//     head reaches its wake-up target; during breathing detection all LEDs grow
+//     brighter while a pocket is pressed
 //
 // Motors on core 0 (MotorControlLoop), UART + sensor + LEDs on core 1. The
 // stepper's 50 kHz interrupt must not share a core with FastLED.
@@ -222,33 +220,24 @@ void loop() {
         person.sendState();
     }
 
-    // LEDs: everything follows the head position (pockets capped); breathing
-    // lifts all of them to full, a click flashes its own pocket strip.
+    // LEDs: all strips follow the head position; breathing lifts them to full.
     using namespace LedConfig;
     static float    breath    = 0.0f;  // breathing boost, 0..1
-    static float    clickL    = 0.0f, clickR = 0.0f;
     static uint32_t lastLedMs = 0;
     float dt     = (millis() - lastLedMs) / 1000.0f;  // seconds since the last loop
     lastLedMs    = millis();
     // 0 = head down .. 1 = head at its wake-up target; dark until homed
     float base = 0.0f;
     if (motorsHomed) base = constrain(headPositionDeg / fmaxf(headTopDeg, 1.0f), 0.0f, 1.0f);
-    float pocket = fminf(base, POCKET_MAX_LEVEL);
     bool inhale  = breathing.running() && (pocketL.pressed() || pocketR.pressed());
-    if (inhale && breath < pocket) breath = pocket;  // rise from what is lit now
+    if (inhale && breath < base) breath = base;  // rise from what is lit now
     if (inhale) breath += dt / BREATH_RISE_S;  // inhaling: brighter
     else        breath -= dt / BREATH_FALL_S;  // exhaling: darker
     breath = constrain(breath, 0.0f, 1.0f);
-    // During breathing a press is an inhale, not a click: no flash then.
-    bool flashL = pocketL.click() && !breathing.running();
-    bool flashR = pocketR.click() && !breathing.running();
-    // a click jumps to full, then fades out
-    clickL = flashL ? 1.0f : fmaxf(clickL - dt / CLICK_FADE_S, 0.0f);
-    clickR = flashR ? 1.0f : fmaxf(clickR - dt / CLICK_FADE_S, 0.0f);
-    // each strip shows the brightest of: head level, breathing, click flash
-    fillLevel(ledsPocketL, fmaxf(fmaxf(pocket, breath), clickL));
-    fillLevel(ledsPocketR, fmaxf(fmaxf(pocket, breath), clickR));
-    fillLevel(ledsRing,    fmaxf(base, breath));
+    float level = fmaxf(base, breath);
+    fillLevel(ledsPocketL, level);
+    fillLevel(ledsPocketR, level);
+    fillLevel(ledsRing,    level);
     FastLED.show();
 
     if (monitorUart) {
