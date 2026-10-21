@@ -10,3 +10,6 @@ logs/
 
 # Python bytecode
 __pycache__/
+
+# Local Claude Code settings and skills
+.claude/
