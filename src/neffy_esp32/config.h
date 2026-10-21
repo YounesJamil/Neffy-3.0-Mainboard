@@ -70,11 +70,16 @@ namespace BoardConfig {
     constexpr int8_t HOME_DIR_HEAD           = 1;    // 1 = home BACKWARD, 0 = home FORWARD
     constexpr bool   HEAD_DIR_INVERTED       = false; // flips the head motor direction (depends on coil wiring)
 
-    // The other board sends DISABLE_MOTORS when a guided breathing exercise starts;
-    // its screen animation appears about half a second after the first move
-    // command, so the first move after DISABLE_MOTORS starts this much later.
+    // The other board sends DISABLE_MOTORS once when a guided breathing exercise
+    // starts and twice within ~0.3 s when it ends. The exercise's screen animation
+    // appears about half a second after the first move command, so the first move
+    // after a single DISABLE_MOTORS starts this much later (and runs this much
+    // shorter, so it still ends on the other board's schedule). A second
+    // DISABLE_MOTORS within DISABLE_PAIR_MS cancels it: the end of an exercise,
+    // so the end pose and the next sleep / wake-up move are not delayed.
     // The motors are not switched off.
     constexpr uint32_t MOVE_DELAY_AFTER_DISABLE_MS = 500;
+    constexpr uint32_t DISABLE_PAIR_MS             = 500;
 
     // Main loop on core 1 (UART, pockets, thermal sensor, LEDs).
     constexpr uint32_t LOOP_DELAY_MS         = 20;

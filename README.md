@@ -31,7 +31,7 @@ Every message is `FA <id> <length> <payload…>`, 115200 baud, on GPIO 43 (TX) a
 | `0x04` | `MOVE_BODY_IN_TIME` | 4 bytes: target position (mm × 10), duration (s × 10) |
 | `0x05` | `MOVE_HEAD_IN_TIME` | 4 bytes: target angle (deg × 10), duration (s × 10) |
 | `0x06` | `MOVE_BODY_HEAD_IN_TIME` | 8 bytes: body position and duration, then head angle and duration |
-| `0x07` | `DISABLE_MOTORS` | 1 byte (not used). Sent at the start of a guided breathing exercise: the next `MOVE_*` starts 0.5 s later, to match the screen animation. The motors stay on. |
+| `0x07` | `DISABLE_MOTORS` | 1 byte (not used). Sent once when a guided breathing exercise starts: the next `MOVE_*` starts 0.5 s later (and runs 0.5 s shorter, so it ends on time), to match the screen animation. Sent twice in a row when the exercise ends: cancels the delay. The motors stay on. |
 | `0x10` | `BREATHING_DETECTION_START` | 1 byte `00`: start the 30 s breathing detection |
 
 **Sent by the mainboard**

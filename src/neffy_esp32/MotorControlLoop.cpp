@@ -21,13 +21,31 @@ static inline uint16_t responseValue(float position, float scaleFactor) {
     return static_cast<uint16_t>(lroundf(fmaxf(position, 0.0f) * scaleFactor));
 }
 
-// Delay of the first move after DISABLE_MOTORS (see MOVE_DELAY_AFTER_DISABLE_MS).
-// Moves arriving within that delay wait for the same moment, so a move split into
-// a body and a head command stays in step. Set and read on core 1 (UART callbacks).
+// Delay of the first move after a single DISABLE_MOTORS (see config.h). Moves
+// arriving within that delay wait for the same moment, so a move split into a
+// body and a head command stays in step. Set and read on core 1 (UART callbacks).
 static volatile bool     moveDelayArmed = false;
 static volatile uint32_t moveDelayUntil = 0;
+static volatile bool     anyDisable     = false;
+static volatile uint32_t lastDisableMs  = 0;
 
-void disableMotors(Message&) { moveDelayArmed = true; }
+void disableMotors(Message&) {
+    uint32_t now  = millis();
+    bool     pair = anyDisable && now - lastDisableMs < BoardConfig::DISABLE_PAIR_MS;
+    moveDelayArmed = !pair;          // single = exercise starts, pair = it ends
+    anyDisable     = true;
+    lastDisableMs  = now;
+}
+
+// Sets the start time of a move received now. A delayed move also runs that much
+// shorter, so it ends when the other board expects it (it sends the next move on
+// its own schedule); short moves (<= 1 s) keep their duration.
+static void scheduleMove(ExchangeMotorData& cmd, uint32_t startAtMs) {
+    cmd.startAtMs = startAtMs;
+    if(startAtMs == 0) return;
+    float delayS = (int32_t)(startAtMs - millis()) / 1000.0f;
+    if(cmd.duration > 1.0f && delayS > 0.0f) cmd.duration -= delayS;
+}
 
 // Start time for a move received now: 0 = at once.
 static uint32_t moveStartMs() {
@@ -50,10 +68,10 @@ void moveBody(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_BODY_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
-    cmd.startAtMs = moveStartMs();
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    scheduleMove(cmd, moveStartMs());
 
     if(motorQueueBody != NULL) xQueueOverwrite(motorQueueBody, &cmd);
 
@@ -65,10 +83,10 @@ void moveHead(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_HEAD_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
-    cmd.startAtMs = moveStartMs();
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    scheduleMove(cmd, moveStartMs());
 
     noteHeadTarget(cmd.position);
     if(motorQueueHead != NULL) xQueueOverwrite(motorQueueHead, &cmd);
@@ -81,15 +99,17 @@ void moveBodyAndHead(Message& msg) {
     if(msg.bytes_in_buffer < NeffyCommands::MOVE_BODY_HEAD_IN_TIME.payloadLength) return;
 
     ExchangeMotorData cmd;
-    cmd.startAtMs = moveStartMs();   // same moment for body and head
+    uint32_t startAtMs = moveStartMs();   // same moment for body and head
 
     cmd.position = readU16(msg, 0) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 2) * NeffyCommands::MOVE_BODY_IN_TIME.scaleFactor;
+    scheduleMove(cmd, startAtMs);
 
     if(motorQueueBody != NULL) xQueueOverwrite(motorQueueBody, &cmd);
 
     cmd.position = readU16(msg, 4) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
     cmd.duration = readU16(msg, 6) * NeffyCommands::MOVE_HEAD_IN_TIME.scaleFactor;
+    scheduleMove(cmd, startAtMs);
 
     noteHeadTarget(cmd.position);
     if(motorQueueHead != NULL) xQueueOverwrite(motorQueueHead, &cmd);
