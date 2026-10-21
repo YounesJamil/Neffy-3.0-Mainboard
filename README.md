@@ -144,6 +144,7 @@ flash one, check the part, then flash `neffy_esp32` again.
 | `neffy_led_fade_test` | `led_fade` | LED brightness control: the ring fades in and out |
 | `neffy_stepper_test` | `stepper` | Body axis: moves 20 mm back and forth, LEDs follow the position |
 | `neffy_stepper_head_test` | `stepper_head` | Head axis: homes, then moves up and down, LEDs follow the position |
+| `neffy_endstop_test` | `endstops` | Endstop switches: shows which switch (GPIO 11 / 12) is pressed when pressed by hand; nothing moves |
 | `neffy_pressure_click_test` | `pressure_click` | Pockets: the firmware's click detection with light response (a click flashes its pocket's LEDs), plus both pocket voltages every 20 ms (record with `tools/pocket_log.py`) |
 | `neffy_person_sensor_test` | `person_sensor` | Thermal sensor: raw readings; read interval and I2C clock switchable over USB |
 | `neffy_person_command_test` | `person_command` | The other board's reaction: sends `GET_PERSON_READING` 0 / 1 alternately every 5 s, without the sensor |
