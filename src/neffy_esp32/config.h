@@ -94,7 +94,7 @@ namespace LedConfig {
     constexpr uint8_t RING_LEDS        = 12;
 
     constexpr uint8_t COLOR_R = 255, COLOR_G = 160, COLOR_B = 0;  // dark, warm yellow
-    constexpr uint8_t MIN_BRIGHT       = 15;     // idle glow (of 255) when the head is down
+    constexpr uint8_t MIN_BRIGHT       = 31;     // idle glow when the head is down: 31 of 255 = ~12 %
 
     // Brightness follows the head over the whole move: down = MIN_BRIGHT, full
     // exactly when the head reaches the target of its last upward move (wake-up
