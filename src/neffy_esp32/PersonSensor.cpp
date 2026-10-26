@@ -21,20 +21,36 @@ static constexpr float LEAVE_FRAC  = 0.6f;
 static constexpr float TAU_DOWN_S    = 1.0f;   // clearly colder than the room
 static constexpr float TAU_ROOM_S    = 10.0f;  // within the noise: room drift
 static constexpr float TAU_WARM_S    = 120.0f; // warmer, but below ENTER
-static constexpr float TAU_PRESENT_S = 300.0f; // someone there
 static constexpr float TAU_NOISE_S   = 5.0f;
 
-// Safety net for a wrongly learned room temperature (it showed up as "someone
-// there" for minutes): a person moves the reading by >= 0.5 C within seconds,
-// a wrong room temperature leaves it flat. Flat for FLAT_WINDOW_MS while
-// "someone there" -> relearn with TAU_FLAT_S instead of TAU_PRESENT_S.
-static constexpr uint32_t FLAT_WINDOW_MS = 20000;
-static constexpr float    FLAT_RANGE_C   = 0.4f;
-static constexpr float    TAU_FLAT_S     = 20.0f;
+// While someone is there the room temperature still creeps towards the reading,
+// so a wrongly learned room level (shows "someone there" with nobody in front)
+// is released after ~30 min. Someone sitting completely still is held ~20 min
+// (for a room temperature only guessed at power-up see TAU_GUESSED_S).
+// (A 20 s flatness check released wrong levels within a minute, but a person
+// sitting still reads just as flat (0.3 C range) and was lost after 2.5 min.)
+static constexpr float TAU_PRESENT_S = 900.0f;
+
+// Leaving shows as a fast drop, but the spot stays up to ~1 C warmer for a
+// while (measured 0.8 C after standing 20 s), which the slow TAU_PRESENT_S does
+// not follow. So: dropped by LEAVE_DROP_FRAC of the height above the room
+// within 1..2 s, or LEAVE_BELOW_MIN_C below the lowest reading since someone
+// came -> gone, room temperature taken from the reading. The second catches
+// leaving when the room temperature was only guessed at power-up (see
+// BOOT_PERSON_MAX_C) and lies far below; leaning in and back does not go below.
+static constexpr float    LEAVE_DROP_FRAC   = 0.6f;
+static constexpr float    LEAVE_BELOW_MIN_C = 1.0f;
+static constexpr uint32_t PEAK_BUCKET_MS    = 1000;
 
 // The first readings after power-up can be off: take the room temperature
 // straight from the readings for this long.
 static constexpr uint32_t WARMUP_MS = 3000;
+
+// A cold sensor (robot stored cold, switched on in a warm room) reads ~0.7 C
+// low at first and settles within ~20 s. Until SETTLE_MS a slow rise is
+// followed as room drift (TAU_ROOM_S instead of TAU_WARM_S); it gave a 47 s
+// false "someone there" before. Someone stepping in rises far faster.
+static constexpr uint32_t SETTLE_MS = 30000;
 
 // Someone already sitting in front at power-up must not be learned as the room.
 // Right after power-up the sensor's own temperature (PTAT) is at most a few C
@@ -42,7 +58,15 @@ static constexpr uint32_t WARMUP_MS = 3000;
 // above within minutes), while a person reads 25..26 C. A reading this much
 // above PTAT can only be something warm in view: PTAT is taken as the room then.
 // After a quick restart PTAT is still warm and this does not trigger.
+// A robot colder than the room (stored cold) also reads above PTAT with nobody
+// there: more than BOOT_PERSON_MAX_C above (measured 8.5 C with PTAT 11.5 C)
+// means a cold sensor, not a person, and the reading is taken as the room. A
+// cold robot closer to the room temperature can still pass as someone there,
+// so a guessed room temperature is relearned faster (TAU_GUESSED_S): someone
+// sitting still is held ~7 min, a wrong guess released within ~10 min.
 static constexpr float BOOT_PERSON_MARGIN_C = 1.0f;
+static constexpr float BOOT_PERSON_MAX_C    = 5.0f;
+static constexpr float TAU_GUESSED_S        = 300.0f;
 
 static constexpr uint8_t TEMP_BYTE_COUNT = 5;
 
@@ -76,8 +100,8 @@ void PersonSensor::init() {
     Wire.setClock(D6TConfig::I2C_CLOCK);
     float t = readTemp();
     _baseline = _lastTemp = _prevTemp = isnan(t) ? 20.0f : t;  // no reading: 20 C until warm-up
-    _lastMs   = _startMs = _flatStartMs = millis();
-    _flatMin  = _flatMax = _baseline;
+    _lastMs   = _startMs = _peakStartMs = millis();
+    _peak     = _prevPeak = _baseline;
 }
 
 PersonState PersonSensor::update() {
@@ -93,25 +117,41 @@ PersonState PersonSensor::update() {
     _prevTemp    = temp;
 
     if (now - _startMs < WARMUP_MS) {
-        bool someoneThere = temp > _lastPtat + BOOT_PERSON_MARGIN_C;  // see BOOT_PERSON_MARGIN_C
-        _baseline = someoneThere ? _lastPtat : temp;
+        float overPtat = temp - _lastPtat;  // see BOOT_PERSON_MARGIN_C and BOOT_PERSON_MAX_C
+        _roomGuessed = overPtat > BOOT_PERSON_MARGIN_C && overPtat <= BOOT_PERSON_MAX_C;
+        _baseline    = _roomGuessed ? _lastPtat : temp;
         return PersonState::NONE;
     }
 
-    // flatness over fixed windows (see FLAT_WINDOW_MS)
-    _flatMin = fminf(_flatMin, temp);
-    _flatMax = fmaxf(_flatMax, temp);
-    if (now - _flatStartMs >= FLAT_WINDOW_MS) {
-        _flat        = _flatMax - _flatMin < FLAT_RANGE_C;
-        _flatStartMs = now;
-        _flatMin     = _flatMax = temp;
+    // highest reading of the last 1..2 s, in two PEAK_BUCKET_MS buckets
+    if (now - _peakStartMs >= PEAK_BUCKET_MS) {
+        _prevPeak    = _peak;
+        _peak        = temp;
+        _peakStartMs = now;
     }
+    _peak = fmaxf(_peak, temp);
+    float recentPeak = fmaxf(_peak, _prevPeak);
 
     float aboveRoom = temp - _baseline;
 
     float enter = fmaxf(K_NOISE * _noise, ENTER_MIN_C);
-    if      (!_present && aboveRoom >= enter)              _present = true;
-    else if ( _present && aboveRoom <  enter * LEAVE_FRAC) _present = false;
+    bool  left  = recentPeak - _baseline >= enter                                    // see LEAVE_DROP_FRAC
+               && (recentPeak - temp >= LEAVE_DROP_FRAC * (recentPeak - _baseline)
+                   || temp < _presentMin - LEAVE_BELOW_MIN_C);
+    if (_present) _presentMin = fminf(_presentMin, temp);
+
+    if (!_present && aboveRoom >= enter) {
+        _present    = true;
+        _presentMin = temp;
+    } else if (_present && aboveRoom < enter * LEAVE_FRAC) {
+        _present     = false;
+        _roomGuessed = false;
+    } else if (_present && left) {
+        _present     = false;
+        _roomGuessed = false;
+        _baseline    = temp;
+        return PersonState::NONE;
+    }
 
     // within the noise band around the room temperature (0.2 C margin for the 0.1 C steps)
     bool quiet = fabsf(aboveRoom) < 3.0f * _noise + 0.2f;
@@ -121,9 +161,9 @@ PersonState PersonSensor::update() {
     float tau;
     if (aboveRoom < -2.0f * _noise) tau = TAU_DOWN_S;   // clearly colder: follow at once
     else if (aboveRoom < 0.0f)      tau = TAU_ROOM_S;
-    else if (_present && _flat)     tau = TAU_FLAT_S;   // "someone there" but flat: relearn
-    else if (_present)              tau = TAU_PRESENT_S;
+    else if (_present)              tau = _roomGuessed ? TAU_GUESSED_S : TAU_PRESENT_S;
     else if (quiet)                 tau = TAU_ROOM_S;
+    else if (now - _startMs < SETTLE_MS) tau = TAU_ROOM_S;  // cold sensor settling
     else                            tau = TAU_WARM_S;
     _baseline += aboveRoom * fminf(dt / tau, 1.0f);  // at most up to the reading
 

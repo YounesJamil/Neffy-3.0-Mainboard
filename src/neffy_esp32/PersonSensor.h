@@ -37,12 +37,13 @@ private:
     float         _prevTemp       = 0.0f;
     float         _noise          = 0.1f;   // reading-to-reading jitter while nobody is there
     bool          _present        = false;
+    bool          _roomGuessed    = false; // room temperature guessed from PTAT at power-up
+    float         _presentMin     = 0.0f;  // lowest reading since someone came
     unsigned long _lastMs         = 0;
     unsigned long _startMs        = 0;
-    unsigned long _flatStartMs    = 0;     // start of the current flatness window
-    float         _flatMin        = 0.0f;
-    float         _flatMax        = 0.0f;
-    bool          _flat           = false; // last window was flat (no person moving)
+    unsigned long _peakStartMs    = 0;     // start of the current peak bucket
+    float         _peak           = 0.0f;  // highest reading in the current bucket
+    float         _prevPeak       = 0.0f;  // ... and in the one before
 
     float readTemp();
 };
