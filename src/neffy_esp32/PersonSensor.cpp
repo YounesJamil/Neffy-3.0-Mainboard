@@ -36,6 +36,14 @@ static constexpr float    TAU_FLAT_S     = 20.0f;
 // straight from the readings for this long.
 static constexpr uint32_t WARMUP_MS = 3000;
 
+// Someone already sitting in front at power-up must not be learned as the room.
+// Right after power-up the sensor's own temperature (PTAT) is at most a few C
+// above the room (cold start: 22.9 C with the room at 19.3 C; it warms to ~8 C
+// above within minutes), while a person reads 25..26 C. A reading this much
+// above PTAT can only be something warm in view: PTAT is taken as the room then.
+// After a quick restart PTAT is still warm and this does not trigger.
+static constexpr float BOOT_PERSON_MARGIN_C = 1.0f;
+
 static constexpr uint8_t TEMP_BYTE_COUNT = 5;
 
 // CRC-8 (polynomial 0x07) over the read address and the 4 data bytes, as the
@@ -85,7 +93,8 @@ PersonState PersonSensor::update() {
     _prevTemp    = temp;
 
     if (now - _startMs < WARMUP_MS) {
-        _baseline = temp;
+        bool someoneThere = temp > _lastPtat + BOOT_PERSON_MARGIN_C;  // see BOOT_PERSON_MARGIN_C
+        _baseline = someoneThere ? _lastPtat : temp;
         return PersonState::NONE;
     }
 
