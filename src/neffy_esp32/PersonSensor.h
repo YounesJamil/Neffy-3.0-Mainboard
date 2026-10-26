@@ -41,6 +41,8 @@ private:
     float         _presentMin     = 0.0f;  // lowest reading since someone came
     unsigned long _lastMs         = 0;
     unsigned long _startMs        = 0;
+    unsigned long _restartMs      = 0;     // sensor sent 0.0 C (restarted) at this time
+    bool          _restarting     = false; // skipping its first readings after a restart
     unsigned long _peakStartMs    = 0;     // start of the current peak bucket
     float         _peak           = 0.0f;  // highest reading in the current bucket
     float         _prevPeak       = 0.0f;  // ... and in the one before

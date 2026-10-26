@@ -63,10 +63,17 @@ static constexpr uint32_t SETTLE_MS = 30000;
 // means a cold sensor, not a person, and the reading is taken as the room. A
 // cold robot closer to the room temperature can still pass as someone there,
 // so a guessed room temperature is relearned faster (TAU_GUESSED_S): someone
-// sitting still is held ~7 min, a wrong guess released within ~10 min.
+// sitting still is held ~3 min, a wrong guess released after ~3 min.
 static constexpr float BOOT_PERSON_MARGIN_C = 1.0f;
 static constexpr float BOOT_PERSON_MAX_C    = 5.0f;
-static constexpr float TAU_GUESSED_S        = 300.0f;
+static constexpr float TAU_GUESSED_S        = 120.0f;
+
+// After its own restart (power dip or loose contact while the board keeps
+// running) the sensor sends exactly 0.0 C with a valid PEC and then ramps up
+// within ~0.5 s (0.0, 10.5, 20.3, 21.6, 23.5 C). Taken as real it set the room
+// temperature to 0 C and showed "someone there" for good. So on 0.0 C the
+// readings of the next RESTART_SKIP_MS are skipped; room and state stay.
+static constexpr uint32_t RESTART_SKIP_MS = 2000;
 
 static constexpr uint8_t TEMP_BYTE_COUNT = 5;
 
@@ -109,6 +116,15 @@ PersonState PersonSensor::update() {
     if (isnan(temp)) return _present ? PersonState::PRESENT : PersonState::NONE; // I2C error: keep state
 
     unsigned long now = millis();
+    if (temp == 0.0f) {  // sensor restarted, see RESTART_SKIP_MS
+        _restarting = true;
+        _restartMs  = now;
+    }
+    if (_restarting) {
+        if (now - _restartMs < RESTART_SKIP_MS) return _present ? PersonState::PRESENT : PersonState::NONE;
+        _restarting = false;
+    }
+
     float dt = fminf((now - _lastMs) / 1000.0f, 1.0f);  // seconds since the last reading, at most 1
     _lastMs  = now;
 
