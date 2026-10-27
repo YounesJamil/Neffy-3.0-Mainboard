@@ -225,12 +225,14 @@ void loop() {
     // LEDs: all strips follow the head position; breathing lifts them to full.
     using namespace LedConfig;
     static float    breath    = 0.0f;  // breathing boost, 0..1
+    static float    base      = 0.0f;  // smoothed head level, 0..1
     static uint32_t lastLedMs = 0;
     float dt     = (millis() - lastLedMs) / 1000.0f;  // seconds since the last loop
     lastLedMs    = millis();
     // 0 = head down .. 1 = head at its wake-up target; dark until homed
-    float base = 0.0f;
-    if (motorsHomed) base = constrain(headPositionDeg / fmaxf(headTopDeg, 1.0f), 0.0f, 1.0f);
+    float head = 0.0f;
+    if (motorsHomed) head = constrain(headPositionDeg / fmaxf(headTopDeg, 1.0f), 0.0f, 1.0f);
+    base += (head - base) * fminf(dt / HEAD_SMOOTH_S, 1.0f);  // see HEAD_SMOOTH_S
     bool inhale  = breathing.running() && (pocketL.pressed() || pocketR.pressed());
     if (inhale && breath < base) breath = base;  // rise from what is lit now
     if (inhale) breath += dt / BREATH_RISE_S;  // inhaling: brighter

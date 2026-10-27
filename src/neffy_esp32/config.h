@@ -104,12 +104,16 @@ namespace LedConfig {
     constexpr uint8_t POCKET_LEDS      = 8;      // LEDs per pocket strip
     constexpr uint8_t RING_LEDS        = 12;
 
-    constexpr uint8_t COLOR_R = 255, COLOR_G = 160, COLOR_B = 0;  // dark, warm yellow
+    constexpr uint8_t COLOR_R = 255, COLOR_G = 100, COLOR_B = 0;  // warm orange
     constexpr uint8_t MIN_BRIGHT       = 50;     // idle glow when the head is down: 50 of 255 = ~20 %
 
     // Brightness follows the head over the whole move: down = MIN_BRIGHT, full
     // exactly when the head reaches the target of its last upward move (wake-up
     // and going to sleep take as long as the motor).
+    // The head position only changes in whole motor steps (~3 per degree, so a
+    // slow 20 deg in 8 s move jumps 7 times a second), which showed as visible
+    // brightness steps: the head level is smoothed over this time (lags as much).
+    constexpr float   HEAD_SMOOTH_S    = 0.3f;
     // Breathing: while inhaling (pocket pressed) all strips rise to full within
     // BREATH_RISE_S and sink back within BREATH_FALL_S while exhaling.
     constexpr float   BREATH_RISE_S    = 6.0f;
