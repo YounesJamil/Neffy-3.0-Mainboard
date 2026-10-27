@@ -38,14 +38,16 @@ private:
     float         _noise          = 0.1f;   // reading-to-reading jitter while nobody is there
     bool          _present        = false;
     bool          _roomGuessed    = false; // room temperature guessed from PTAT at power-up
-    float         _presentMin     = 0.0f;  // lowest reading since someone came
+    bool          _leaving        = false; // "gone" seen, waiting for LEAVE_CONFIRM_MS
+    unsigned long _leavingMs      = 0;
+    unsigned long _enterMs        = 0;     // someone came at this time
+    unsigned long _minStartMs     = 0;     // start of the current minimum bucket
+    float         _curMin         = NAN;   // lowest reading while there, current bucket
+    float         _prevMin        = NAN;   // ... previous complete bucket
     unsigned long _lastMs         = 0;
     unsigned long _startMs        = 0;
     unsigned long _restartMs      = 0;     // sensor sent 0.0 C (restarted) at this time
     bool          _restarting     = false; // skipping its first readings after a restart
-    unsigned long _peakStartMs    = 0;     // start of the current peak bucket
-    float         _peak           = 0.0f;  // highest reading in the current bucket
-    float         _prevPeak       = 0.0f;  // ... and in the one before
 
     float readTemp();
 };

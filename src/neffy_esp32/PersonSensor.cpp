@@ -7,11 +7,14 @@
 // front, 1 m away, walking past, leaving).
 //
 // Someone is there as soon as it is ENTER warmer than the learned room
-// temperature, and gone as soon as it is less than LEAVE_FRAC of that: both on
-// a single reading, the gap only stops flicker around the threshold.
+// temperature (a single reading), and gone when it stays below LEAVE_FRAC of
+// that for LEAVE_CONFIRM_MS (see there); the gap stops flicker around the threshold.
 // ENTER = max(K_NOISE * jitter, ENTER_MIN_C), so a noisy spot raises it.
-// Standing in front gives +4..6 C, 1 m away about +2 C.
-static constexpr float ENTER_MIN_C = 1.0f;
+// Standing in front gives +4..6 C, 1 m away about +2 C. Distance test 26 Oct
+// (room 21 C): 3 m +0.85, 2 m +1.06, 1.5 m +1.8, 1 m +2.7, 0.5 m +3.8 C.
+// 0.8 instead of 1.0 holds 3 m 95 % of the time instead of 66 %, with nearly
+// no more false "someone there" in an empty room (2.6 % instead of 2.4 %).
+static constexpr float ENTER_MIN_C = 0.8f;
 static constexpr float K_NOISE     = 8.0f;
 static constexpr float LEAVE_FRAC  = 0.6f;
 
@@ -31,16 +34,29 @@ static constexpr float TAU_NOISE_S   = 5.0f;
 // sitting still reads just as flat (0.3 C range) and was lost after 2.5 min.)
 static constexpr float TAU_PRESENT_S = 900.0f;
 
-// Leaving shows as a fast drop, but the spot stays up to ~1 C warmer for a
-// while (measured 0.8 C after standing 20 s), which the slow TAU_PRESENT_S does
-// not follow. So: dropped by LEAVE_DROP_FRAC of the height above the room
-// within 1..2 s, or LEAVE_BELOW_MIN_C below the lowest reading since someone
-// came -> gone, room temperature taken from the reading. The second catches
-// leaving when the room temperature was only guessed at power-up (see
-// BOOT_PERSON_MAX_C) and lies far below; leaning in and back does not go below.
-static constexpr float    LEAVE_DROP_FRAC   = 0.6f;
-static constexpr float    LEAVE_BELOW_MIN_C = 1.0f;
-static constexpr uint32_t PEAK_BUCKET_MS    = 1000;
+// After leaving, the spot stays up to ~1 C warmer for a while (measured 0.8 C
+// after standing 20 s), which the slow TAU_PRESENT_S does not follow, so the
+// reading may never get below LEAVE_FRAC. Also gone: LEAVE_BELOW_MIN_C below
+// the lowest reading while someone was there (taken over the previous complete
+// MIN_BUCKET_MS bucket, from LEAVE_MIN_AFTER_MS after they came, so neither
+// the way in nor the way out counts), and either less than LEAVE_NEAR_C above
+// the room or the room temperature only guessed at power-up (see
+// BOOT_PERSON_MAX_C; it lies far below then). The room temperature is taken
+// from the reading then. Leaning back while seated (25 -> 23.8 C, room 21 C)
+// stays well above LEAVE_NEAR_C.
+static constexpr float    LEAVE_BELOW_MIN_C  = 1.0f;
+static constexpr float    LEAVE_NEAR_C       = 1.5f;
+static constexpr uint32_t LEAVE_MIN_AFTER_MS = 2000;
+static constexpr uint32_t MIN_BUCKET_MS      = 15000;
+
+// The other board sends Neffy to sleep on the first "nobody". Leaning back or
+// turning away read close to the room for 1..3 s, and Neffy went to sleep and
+// woke up again every ~10 s with someone sitting in front. So gone is only
+// reported when it holds for LEAVE_CONFIRM_MS, and leaving is called off only
+// when the reading is clearly back: ENTER above the room and within
+// LEAVE_BACK_C of the lowest reading while there.
+static constexpr uint32_t LEAVE_CONFIRM_MS = 2000;
+static constexpr float    LEAVE_BACK_C     = 0.5f;
 
 // The first readings after power-up can be off: take the room temperature
 // straight from the readings for this long.
@@ -71,9 +87,13 @@ static constexpr float TAU_GUESSED_S        = 120.0f;
 // After its own restart (power dip or loose contact while the board keeps
 // running) the sensor sends exactly 0.0 C with a valid PEC and then ramps up
 // within ~0.5 s (0.0, 10.5, 20.3, 21.6, 23.5 C). Taken as real it set the room
-// temperature to 0 C and showed "someone there" for good. So on 0.0 C the
-// readings of the next RESTART_SKIP_MS are skipped; room and state stay.
+// temperature to 0 C and showed "someone there" for good. So on 0.0 C, or a
+// drop by more than RESTART_DROP_C from one reading to the next (real ones drop
+// at most 2.2 C), the readings of the next RESTART_SKIP_MS are skipped; room
+// and state stay. A restart during the warm-up starts the warm-up again (a
+// room temperature of 10 C was learned from the ramp at power-up).
 static constexpr uint32_t RESTART_SKIP_MS = 2000;
+static constexpr float    RESTART_DROP_C  = 8.0f;
 
 static constexpr uint8_t TEMP_BYTE_COUNT = 5;
 
@@ -107,8 +127,8 @@ void PersonSensor::init() {
     Wire.setClock(D6TConfig::I2C_CLOCK);
     float t = readTemp();
     _baseline = _lastTemp = _prevTemp = isnan(t) ? 20.0f : t;  // no reading: 20 C until warm-up
-    _lastMs   = _startMs = _peakStartMs = millis();
-    _peak     = _prevPeak = _baseline;
+    _lastMs   = _startMs = _restartMs = millis();
+    _restarting = t == 0.0f;  // sensor just started, see RESTART_SKIP_MS
 }
 
 PersonState PersonSensor::update() {
@@ -116,13 +136,15 @@ PersonState PersonSensor::update() {
     if (isnan(temp)) return _present ? PersonState::PRESENT : PersonState::NONE; // I2C error: keep state
 
     unsigned long now = millis();
-    if (temp == 0.0f) {  // sensor restarted, see RESTART_SKIP_MS
+    if (temp == 0.0f || _prevTemp - temp > RESTART_DROP_C) {  // sensor restarted, see RESTART_SKIP_MS
         _restarting = true;
         _restartMs  = now;
     }
     if (_restarting) {
+        _prevTemp = temp;  // compare the next reading with this one
         if (now - _restartMs < RESTART_SKIP_MS) return _present ? PersonState::PRESENT : PersonState::NONE;
         _restarting = false;
+        if (_restartMs - _startMs < WARMUP_MS) _startMs = now;  // restarted during the warm-up: warm up again
     }
 
     float dt = fminf((now - _lastMs) / 1000.0f, 1.0f);  // seconds since the last reading, at most 1
@@ -139,34 +161,41 @@ PersonState PersonSensor::update() {
         return PersonState::NONE;
     }
 
-    // highest reading of the last 1..2 s, in two PEAK_BUCKET_MS buckets
-    if (now - _peakStartMs >= PEAK_BUCKET_MS) {
-        _prevPeak    = _peak;
-        _peak        = temp;
-        _peakStartMs = now;
-    }
-    _peak = fmaxf(_peak, temp);
-    float recentPeak = fmaxf(_peak, _prevPeak);
-
     float aboveRoom = temp - _baseline;
+    float enter     = fmaxf(K_NOISE * _noise, ENTER_MIN_C);
 
-    float enter = fmaxf(K_NOISE * _noise, ENTER_MIN_C);
-    bool  left  = recentPeak - _baseline >= enter                                    // see LEAVE_DROP_FRAC
-               && (recentPeak - temp >= LEAVE_DROP_FRAC * (recentPeak - _baseline)
-                   || temp < _presentMin - LEAVE_BELOW_MIN_C);
-    if (_present) _presentMin = fminf(_presentMin, temp);
+    // leaving (see LEAVE_BELOW_MIN_C and LEAVE_CONFIRM_MS); _prevMin is NAN until known
+    bool belowMin = !isnan(_prevMin) && temp < _prevMin - LEAVE_BELOW_MIN_C
+                 && (_roomGuessed || aboveRoom < LEAVE_NEAR_C);
+    bool goneNow  = aboveRoom < enter * LEAVE_FRAC || belowMin;
+    bool back     = aboveRoom >= enter && (isnan(_prevMin) || temp >= _prevMin - LEAVE_BACK_C);
 
-    if (!_present && aboveRoom >= enter) {
-        _present    = true;
-        _presentMin = temp;
-    } else if (_present && aboveRoom < enter * LEAVE_FRAC) {
-        _present     = false;
-        _roomGuessed = false;
-    } else if (_present && left) {
-        _present     = false;
-        _roomGuessed = false;
-        _baseline    = temp;
-        return PersonState::NONE;
+    if (!_present) {
+        if (aboveRoom >= enter) {
+            _present  = true;
+            _leaving  = false;
+            _enterMs  = _minStartMs = now;
+            _curMin   = _prevMin = NAN;
+        }
+    } else {
+        if (_leaving && back)          _leaving = false;
+        else if (goneNow && !_leaving) { _leaving = true; _leavingMs = now; }
+
+        if (_leaving && now - _leavingMs >= LEAVE_CONFIRM_MS) {
+            _present = _leaving = _roomGuessed = false;
+            if (belowMin) {
+                _baseline = temp;
+                return PersonState::NONE;
+            }
+        } else if (!_leaving && now - _enterMs >= LEAVE_MIN_AFTER_MS) {
+            // lowest reading while there, in MIN_BUCKET_MS buckets
+            if (now - _minStartMs >= MIN_BUCKET_MS) {
+                _prevMin    = _curMin;
+                _curMin     = NAN;
+                _minStartMs = now;
+            }
+            _curMin = isnan(_curMin) ? temp : fminf(_curMin, temp);
+        }
     }
 
     // within the noise band around the room temperature (0.2 C margin for the 0.1 C steps)
